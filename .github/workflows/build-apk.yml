@@ -1,0 +1,68 @@
+
+name: Build NMD Network APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "nmd-network.zip"
+      - ".github/workflows/build-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check project ZIP
+        run: |
+          test -f nmd-network.zip
+          echo "Project ZIP found."
+
+      - name: Extract project
+        run: |
+          mkdir -p extracted-project
+          unzip -q nmd-network.zip -d extracted-project
+          test -f extracted-project/settings.gradle.kts
+          test -d extracted-project/app
+          echo "Project extracted successfully."
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platforms;android-36.1" \
+            "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Build NMD Network APK
+        run: |
+          gradle -p extracted-project \
+            :app:assembleDebug \
+            --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NMD-Network-APK
+          path: extracted-project/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
