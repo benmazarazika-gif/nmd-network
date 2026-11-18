@@ -3,7 +3,10 @@ name: Build NMD Network APK
 
 on:
   workflow_dispatch:
+
   push:
+    branches:
+      - main
     paths:
       - "nmd-network.zip"
       - ".github/workflows/build-apk.yml"
@@ -13,56 +16,136 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build NMD Network Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
+      # 1. Download repository files
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check project ZIP
+      # 2. Verify uploaded ZIP
+      - name: Verify project archive
         run: |
-          test -f nmd-network.zip
-          echo "Project ZIP found."
+          set -e
+          if [ ! -f nmd-network.zip ]; then
+            echo "ERROR: nmd-network.zip was not found."
+            exit 1
+          fi
 
-      - name: Extract project
+          echo "Project archive found."
+          ls -lh nmd-network.zip
+
+      # 3. Extract original project
+      - name: Extract NMD Network project
         run: |
+          set -e
+
           mkdir -p extracted-project
           unzip -q nmd-network.zip -d extracted-project
-          test -f extracted-project/settings.gradle.kts
-          test -d extracted-project/app
-          echo "Project extracted successfully."
 
-      - name: Set up Java
+          PROJECT_SETTINGS=$(find extracted-project \
+            -name settings.gradle.kts \
+            -type f -print -quit)
+
+          if [ -z "$PROJECT_SETTINGS" ]; then
+            echo "ERROR: settings.gradle.kts not found in ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT_SETTINGS")
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "ERROR: Android app module not found."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project extracted successfully."
+          echo "Project directory: $PROJECT_DIR"
+
+      # 4. Set up Java
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      # 5. Set up Android SDK
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
-      - name: Install Android SDK packages
+      # 6. Install Android platform and build tools
+      - name: Install Android build packages
         run: |
+          set -e
+
           sdkmanager --install \
-            "platforms;android-36.1" \
+            "platforms;android-36" \
             "build-tools;36.0.0"
 
+          sdkmanager --list_installed
+
+      # 7. Set up Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.3.1"
 
-      - name: Build NMD Network APK
+      # 8. Check project configuration
+      - name: Check project structure
         run: |
-          gradle -p extracted-project \
+          set -e
+
+          echo "Project: $PROJECT_DIR"
+
+          test -f "$PROJECT_DIR/settings.gradle.kts"
+          test -f "$PROJECT_DIR/app/build.gradle.kts"
+
+          echo "Checking Android modules:"
+          ls -la "$PROJECT_DIR"
+
+      # 9. Build real Android APK
+      - name: Build NMD Network Debug APK
+        run: |
+          set -e
+
+          gradle \
+            -p "$PROJECT_DIR" \
             :app:assembleDebug \
+            --no-daemon \
             --stacktrace
 
-      - name: Upload APK
+      # 10. Locate and verify APK
+      - name: Verify generated APK
+        run: |
+          set -e
+
+          APK_PATH=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
+            -type f \
+            -name "*.apk" \
+            -print -quit)
+
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
+
+          echo "APK successfully generated:"
+          ls -lh "$APK_PATH"
+          file "$APK_PATH"
+
+      # 11. Upload APK for download
+      - name: Upload NMD Network APK
         uses: actions/upload-artifact@v4
         with:
           name: NMD-Network-APK
-          path: extracted-project/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 30
